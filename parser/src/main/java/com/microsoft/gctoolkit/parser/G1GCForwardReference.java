@@ -32,7 +32,6 @@ import com.microsoft.gctoolkit.event.g1gc.G1YoungInitialMark;
 import com.microsoft.gctoolkit.parser.jvm.Decorators;
 import com.microsoft.gctoolkit.time.DateTimeStamp;
 
-import java.util.Arrays;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.logging.Logger;
@@ -43,17 +42,17 @@ class G1GCForwardReference extends ForwardReference {
 
     private static final Logger LOGGER = Logger.getLogger(G1GCForwardReference.class.getName());
 
-    private static int heapRegionSize = 0;
-    private static long minHeapSize;
-    private static long initialHeapSize;
-    private static long maxHeapSize;
+    private int heapRegionSize = 0;
+    private long minHeapSize;
+    private long initialHeapSize;
+    private long maxHeapSize;
     private DateTimeStamp concurrentCycleStartTime;
 
-    static void setHeapRegionSize(int sizeInMegaBytes) {
+    void setHeapRegionSize(int sizeInMegaBytes) {
         heapRegionSize = sizeInMegaBytes;
     }
 
-    static int getHeapRegionSize() {
+    int getHeapRegionSize() {
         return heapRegionSize;
     }
 
@@ -70,27 +69,27 @@ class G1GCForwardReference extends ForwardReference {
     }
 
     //bag of stuff to maybe eliminate
-    static void setMinHeapSize(long minHeapSize) {
-        G1GCForwardReference.minHeapSize = minHeapSize;
+    void setMinHeapSize(long minHeapSize) {
+        this.minHeapSize = minHeapSize;
     }
 
-    static long getMinHeapSize() {
+    long getMinHeapSize() {
         return minHeapSize;
     }
 
-    static void setInitialHeapSize(long initialHeapSize) {
-        G1GCForwardReference.initialHeapSize = initialHeapSize;
+    void setInitialHeapSize(long initialHeapSize) {
+        this.initialHeapSize = initialHeapSize;
     }
 
-    static long getInitialHeapSize() {
+    long getInitialHeapSize() {
         return initialHeapSize;
     }
 
-    static void setMaxHeapSize(long maxHeapSize) {
-        G1GCForwardReference.maxHeapSize = maxHeapSize;
+    void setMaxHeapSize(long maxHeapSize) {
+        this.maxHeapSize = maxHeapSize;
     }
 
-    static long getMaxHeapSize() {
+    long getMaxHeapSize() {
         return maxHeapSize;
     }
 
@@ -543,14 +542,10 @@ class G1GCForwardReference extends ForwardReference {
         MemoryPoolSummary young = getMemoryPoolSummary(YOUNG_OCCUPANCY_BEFORE_COLLECTION);
         MemoryPoolSummary eden = getMemoryPoolSummary(EDEN_OCCUPANCY_BEFORE_COLLECTION);
         SurvivorMemoryPoolSummary survivor = getSurvivorMemoryPoolSummary();
-        MemoryPoolSummary tenured = getMemoryPoolSummary(OLD_OCCUPANCY_BEFORE_COLLECTION);
+        MemoryPoolSummary old = getMemoryPoolSummary(OLD_OCCUPANCY_BEFORE_COLLECTION);
         MemoryPoolSummary humongous = getMemoryPoolSummary(HUMONGOUS_OCCUPANCY_BEFORE_COLLECTION);
-        if (heap != null && eden != null && survivor != null) {
-            collection.addMemorySummary(eden, survivor, heap);
-        } else if (eden == null && survivor == null && heap != null) {
-            collection.addMemorySummary(heap);
-        } //else
-        //need to consider other possible combinations.
+        collection.addHeapRegionSize(heapRegionSize);
+        collection.addMemorySummary(eden, survivor, old, humongous, heap);
     }
 
     /*
@@ -564,7 +559,9 @@ class G1GCForwardReference extends ForwardReference {
     private static final int METASPACE_RESERVED_AFTER_COLLECTION = 31;
      */
     private void fillInMetaspaceStats(G1GCPauseEvent collection) {
-        collection.addPermOrMetaSpaceRecord(getMemoryPoolSummary(METASPACE_OCCUPANCY_BEFORE_COLLECTION));
+        collection.addPermOrMetaSpaceRecord(
+                getMemoryPoolSummary(METASPACE_OCCUPANCY_BEFORE_COLLECTION),
+                getMemoryPoolSummary(CLASSSPACE_OCCUPANCY_BEFORE_COLLECTION));
     }
 
 
@@ -655,6 +652,11 @@ class G1GCForwardReference extends ForwardReference {
         preEvacuateCSetPhaseNames().forEach(name -> collection.addPreEvacuationCollectionPhase(name, preEvacuateCSetPhaseDuration(name)));
         evacuateCSetPhaseNames().forEach(name -> collection.addEvacuationCollectionPhase(name, evacuateCSetPhaseDuration(name)));
         postEvacuateCSetPhaseNames().forEach(name -> collection.addPostEvacuationCollectionPhase(name, postEvacuateCSetPhaseDuration(name)));
+    }
+
+    private void fillInWorkers(G1Young collection) {
+        collection.setEvacuationWorkersUsed(evacuationWorkersUsed);
+        collection.setEvacuationWorkersAvailable(evacuationWorkersAvailable);
     }
 
     private DateTimeStamp pausePhaseDuringConcurrentCycleTime = null;
@@ -773,9 +775,12 @@ class G1GCForwardReference extends ForwardReference {
         fillInRegionSummary(collection);
         fillInMetaspaceStats(collection);
         fillInPhases(collection);
+        fillInWorkers(collection);
         if (toSpaceExhausted) collection.toSpaceExhausted();
         if (hasReferenceGCSummary())
             collection.add(generateReferenceGCSummary());
+        if (survivorRecord != null)
+            collection.add(survivorRecord);
         collection.addCPUSummary(getCPUSummary());
         return collection;
     }
@@ -850,6 +855,7 @@ class G1GCForwardReference extends ForwardReference {
         //collection.classUnloading()  todo: fill in
         fillInMemoryPoolStats(collection);
         fullInInternalPhases(collection);
+        fillInRegionSummary(collection);
         if (hasReferenceGCSummary())
             collection.add(generateReferenceGCSummary());
         collection.addCPUSummary(getCPUSummary());

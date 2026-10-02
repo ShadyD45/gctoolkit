@@ -32,7 +32,6 @@ abstract class LogDiaryTest {
                 filter(completed -> completed).
                 findFirst();
 
-        jvmConfiguration.fillInKnowns();
         return jvmConfiguration;
     }
 
@@ -288,6 +287,9 @@ abstract class LogDiaryTest {
                     case 27:
                         assertTrue(name + ":PRINT_FLS_STATISTICS should be known", diary.isPrintFLSStatisticsKnown());
                         break;
+                    case 28:
+                    	assertTrue(name + ":PRINT_CPU_TIMES should be known", diary.isPrintCPUTimes());
+                    	break;
                     default:
                         fail("unknown unknown");
                 }

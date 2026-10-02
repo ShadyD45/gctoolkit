@@ -26,10 +26,21 @@ public class RotatingLogFileMetadata extends LogFileMetadata {
 
     private List<LogFileSegment> segments;
 
+    /**
+     * Creates metadata for a rotating garbage collection log source.
+     *
+     * @param path path to a rotating log file, archive, or directory
+     * @throws IOException if the path cannot be inspected
+     */
     public RotatingLogFileMetadata(Path path) throws IOException {
         super(path);
     }
 
+    /**
+     * Streams the contiguous log segments in chronological order.
+     *
+     * @return a stream of ordered log segments
+     */
     public Stream<LogFileSegment> logFiles() {
         if ( segments == null) {
             if ( isPlainText() || isDirectory())
@@ -137,9 +148,7 @@ public class RotatingLogFileMetadata extends LogFileMetadata {
 
     private void orderSegments() {
 
-        if (segments.size() < 2) {
-            return;
-        }
+        if (segments.size() < 2) return;
 
         LinkedList<LogFileSegment> orderedList = new LinkedList<>();
         List<LogFileSegment> workingList = new ArrayList<>();
@@ -151,7 +160,7 @@ public class RotatingLogFileMetadata extends LogFileMetadata {
                 .filter( segment -> segment.getSegmentName().endsWith(basePattern) || segment.getSegmentName().endsWith(".current"))
                 .findFirst().get();
 
-        orderedList.addFirst(current);
+        orderedList.addLast(current);
         workingList = removeIneligibleSegments (workingList, current);
         while ( ! workingList.isEmpty()) {
             current = workingList.stream()
@@ -160,7 +169,6 @@ public class RotatingLogFileMetadata extends LogFileMetadata {
             orderedList.addFirst(current);
             workingList = removeIneligibleSegments (workingList, current);
         }
-
         segments = orderedList;
     }
 

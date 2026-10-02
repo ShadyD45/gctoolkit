@@ -31,13 +31,27 @@ public class Decorators {
      * level -- The level associated with the log message
      * tags -- The tag-set associated with the log message
      *
-     * This implementation takes advantage of the property that the ordering of tags is stable.
-     * The default decorators (as of the time of authoring JDK 9-17) include [uptime][level][tags].
+     * This implementation takes advantage of the property that the ordering of tags is stable. For example,
+     * -Xlog:*::pid,time produces the identical ordering as -Xlog:*::time,pid. Moreover, the list of decorators
+     * is dedupped implying that the second decorator in -Xlog:*::time,time is ignored.
+     *
+     * The default decorators (as of the time of authoring JDK 9-21) include [uptime][level][tags].
      * For example, [1.361s][info][gc,heap]. This reads uptime of 1.361 seconds. The tag for the log record
      * is gc.heap at the info level.
      *
-     * At the moment, GCToolkit does not differentiate between timenanos and uptimenanos as there is no formatting hint
-     * to allow for a differentiation. Less importantly, there is currently no way to differentiate between pid and tid.
+     * At issue is that uptime and timemillis are, on the surface, indistinguishable. The same is true with
+     * timenanos and uptimenanos as well as with pid and tid. The following logic can be used to help differentiate
+     * indistinguishable decorators.
+     *
+     * 1) If both decorators are present then order can be used to differentiate
+     * 2) If ms time value - 20 years > 0, then timemillis can be assumed. Otherwise uptime is assumed. The reasoning
+     *    is, unified logging didn't exist that long ago. The value of 20 has been arbitrarily chosen.
+     * 3) There is no reliable way to differentiate the nanosecond timings if only 1 is present. However this may not
+     *    matter as GCToolKit would only use these values to create a baseline measure to align date/time with uptime.
+     *    This technique is designed to work-around the cases where logs do not contain the uptime decorator.
+     * 4) There is no known way to reliably differentiate between PID and TID. At this time, GCToolKit ignores these
+     *    decorators.
+     *
      * Todo: GCToolkit captures time in the DateTimeStamp class. That class will capture uptime or time or both. If both
      * are missing, GCToolkit JVMEvents will have no sense of time. It is possible that the other timing fields could fill
      * in cases where both the time and uptime decorators were missing.
@@ -50,9 +64,20 @@ public class Decorators {
     private static final long TWENTY_YEARS_IN_MILLIS = 731L * 24L * 60L * 60L * 1000L;
     private static final long TWENTY_YEARS_IN_NANO = 731L * 24L * 60L * 60L * 1000L;
 
+    private static final int DATE_STAMP_GROUP = 0;
+    private static final int UPTIME_GROUP = 1;
+    private static final int TIME_MILLIS_OR_MAYBE_UPTIME_MILLIS_GROUP = 2;
+    private static final int UPTIME_MILLIS_GROUP = 3;
+    private static final int TIME_NANOS_OR_MAYBE_UPTIME_NANOS_GROUP = 4;
+    private static final int UPTIME_NANOS_GROUP = 5;
+    private static final int PID_GROUP = 6;
+    private static final int TID_GROUP = 7;
+    private static final int LOG_LEVEL_GROUP = 8;
+    private static final int TAGS_GROUP = 9;
+
     int numberOfDecorators;
 
-    private Matcher decoratorMatcher = null;
+    private String[] decoratorGroups;
     private String tags;
 
     public Decorators(String line) {
@@ -60,24 +85,22 @@ public class Decorators {
     }
 
     private void extractValues(String line) {
-
         if (!line.startsWith("["))
             return;
 
-        decoratorMatcher = UnifiedLoggingTokens.DECORATORS.matcher(line);
+        Matcher decoratorMatcher = UnifiedLoggingTokens.DECORATORS.matcher(line);
         if (!decoratorMatcher.find()) {
             return;
         }
 
-        for ( int i = 1; i <= decoratorMatcher.groupCount(); i++) {
-            if ( decoratorMatcher.group(i) != null)
+        // Retrieving a group from a matcher calls substring each time
+        // Store all the groups in an array ahead of time to avoid paying this cost unnecessarily
+        decoratorGroups = new String[decoratorMatcher.groupCount()];
+        for (int i = 1; i <= decoratorMatcher.groupCount(); i++) {
+            String group = decoratorMatcher.group(i);
+            decoratorGroups[i-1] = group;
+            if (group != null)
                 numberOfDecorators++;
-        }
-
-        Matcher tagMatcher = UnifiedLoggingTokens.TAGS.matcher(line);
-        if (tagMatcher.find()) {
-            numberOfDecorators++;
-            tags = String.join(",", Arrays.asList(tagMatcher.group(1).trim().split(",")));
         }
     }
 
@@ -86,10 +109,11 @@ public class Decorators {
 
     public ZonedDateTime getDateStamp() {
         try {
-            String value = decoratorMatcher.group(1);
+            String value = decoratorGroups[DATE_STAMP_GROUP];
             if (value != null) {
                 TemporalAccessor temporalAccessor = formatter.parse(value.substring(1, value.length()-1));
-                return ZonedDateTime.from(temporalAccessor);            }
+                return ZonedDateTime.from(temporalAccessor);
+            }
         } catch (NullPointerException npe) {
             LOGGER.log(Level.SEVERE, npe.getMessage(), npe);
         }
@@ -97,7 +121,7 @@ public class Decorators {
     }
 
     public double getUpTime() {
-        String value = decoratorMatcher.group(2);
+        String value = decoratorGroups[UPTIME_GROUP];
         if (value != null) {
             value = value.replace(",", ".");
             return Double.parseDouble(unboxValue(value, 1));
@@ -107,10 +131,10 @@ public class Decorators {
 
     private long extractClock(int groupIndex, long threshold) {
         long clockReading = -1L;
-        String stringValue = decoratorMatcher.group(groupIndex);
+        String stringValue = decoratorGroups[groupIndex];
         if (stringValue != null) {
             clockReading = Long.parseLong(unboxValue(stringValue, 2));
-            if (decoratorMatcher.group(groupIndex + 1) == null)
+            if (decoratorGroups[groupIndex + 1] == null)
                 if (clockReading < threshold)
                     clockReading = -1L;
         }
@@ -118,13 +142,13 @@ public class Decorators {
     }
 
     public long getTimeMillis() {
-        return extractClock(3, TWENTY_YEARS_IN_MILLIS);
+        return extractClock(TIME_MILLIS_OR_MAYBE_UPTIME_MILLIS_GROUP, TWENTY_YEARS_IN_MILLIS);
     }
 
     public long getUptimeMillis() {
-        String value = decoratorMatcher.group(4);
+        String value = decoratorGroups[UPTIME_MILLIS_GROUP];
         if (value == null) {
-            value = decoratorMatcher.group(3);
+            value = decoratorGroups[TIME_MILLIS_OR_MAYBE_UPTIME_MILLIS_GROUP];
         }
         if (value != null) {
             long longValue = Long.parseLong(unboxValue(value, 2));
@@ -135,13 +159,13 @@ public class Decorators {
     }
 
     public long getTimeNano() {
-        return extractClock(5, TWENTY_YEARS_IN_NANO);
+        return extractClock(TIME_NANOS_OR_MAYBE_UPTIME_NANOS_GROUP, TWENTY_YEARS_IN_NANO);
     }
 
     public long getUptimeNano() {
-        String value = decoratorMatcher.group(6);
+        String value = decoratorGroups[UPTIME_NANOS_GROUP];
         if (value == null) {
-            value = decoratorMatcher.group(5);
+            value = decoratorGroups[TIME_NANOS_OR_MAYBE_UPTIME_NANOS_GROUP];
         }
         if (value != null) {
             long longValue = Long.parseLong(unboxValue(value, 2));
@@ -152,7 +176,7 @@ public class Decorators {
     }
 
     public int getPid() {
-        String value = decoratorMatcher.group(7);
+        String value = decoratorGroups[PID_GROUP];
         if (value != null) {
             return Integer.parseInt(unboxValue(value));
         }
@@ -160,7 +184,7 @@ public class Decorators {
     }
 
     public int getTid() {
-        String value = decoratorMatcher.group(8);
+        String value = decoratorGroups[TID_GROUP];
         if (value != null) {
             return Integer.parseInt(unboxValue(value));
         }
@@ -168,7 +192,7 @@ public class Decorators {
     }
 
     public Optional<UnifiedLoggingLevel> getLogLevel() {
-        String level = decoratorMatcher.group(9);
+        String level = decoratorGroups[LOG_LEVEL_GROUP];
         if (level != null)
             try {
                 return Optional.of(UnifiedLoggingLevel.valueOf(unboxValue(level)));
@@ -197,10 +221,15 @@ public class Decorators {
     }
 
     public boolean tagsContain(String tagList) {
-        return tags.contains(tagList);
+        return getTags().contains(tagList);
     }
 
     public String getTags() {
+        if (tags == null && decoratorGroups[TAGS_GROUP] != null) {
+            tags = String.join(",", Arrays.asList(
+                    unboxValue(decoratorGroups[TAGS_GROUP]).trim().split(",")
+            ));
+        }
         return tags;
     }
 }

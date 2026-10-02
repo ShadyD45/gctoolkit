@@ -476,4 +476,19 @@ public class DateTimeStampTest {
         assertEquals(comp1To2, comp1To3, "compareTo() is not transitive");
     }
 
+    @Test
+    void malformedDateTimeStampThrowsException() {
+        final DateTimeStamp onlyDate = new DateTimeStamp("2021-09-01T11:12:13.111-0100");
+        final DateTimeStamp onlyTime = new DateTimeStamp(1.0D);
+        assertThrows(IllegalStateException.class, () -> onlyDate.after(onlyTime));
+    }
+
+    @Test 
+    void shouldParseGCLogLineWithBrackets() {
+        final String dateTimeString = "2025-05-08T11:07:55.681+0530";
+        final String gcLogLine = "[" + dateTimeString + "][gc,phases   ] GC(4)   Other: 0.2ms";
+        final DateTimeStamp dateTimeStamp = DateTimeStamp.fromGCLogLine(gcLogLine);
+        final ZonedDateTime expected = ZonedDateTime.from(formatter.parse(dateTimeString));
+        assertTrue(expected.isEqual(dateTimeStamp.getDateTime()));
+    }
 }

@@ -62,7 +62,6 @@ public class EndToEndIntegrationTest {
                 .map(HeapOccupancyAfterCollectionSummary::get)
                 .ifPresent(summary -> {
                     summary.forEach((gcType, dataSet) -> {
-                        System.out.printf(message, gcType, dataSet.size());
                         switch (gcType) {
                             case DefNew:
                                 defNewCount = dataSet.size();
@@ -87,7 +86,7 @@ public class EndToEndIntegrationTest {
         // Retrieves the Aggregation for PauseTimeSummary. This is a com.microsoft.gctoolkit.sample.aggregation.RuntimeAggregation.
         machine.getAggregation(PauseTimeSummary.class).ifPresent(pauseTimeSummary -> {
             Assertions.assertEquals( 208.922, pauseTimeSummary.getTotalPauseTime(), 0.001d, "Total Pause Time");
-            Assertions.assertEquals( 608800.087, pauseTimeSummary.estimatedRuntime(),0.001d, "Runtime duration");
+            Assertions.assertEquals( 608797.895, pauseTimeSummary.estimatedRuntime(),0.001d, "Runtime duration");
             Assertions.assertEquals( 34, (int)(pauseTimeSummary.getPercentPaused() * 1000d), "percent paused");
         });
 

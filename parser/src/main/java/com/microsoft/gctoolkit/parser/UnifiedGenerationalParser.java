@@ -4,6 +4,7 @@ package com.microsoft.gctoolkit.parser;
 
 import com.microsoft.gctoolkit.aggregator.EventSource;
 import com.microsoft.gctoolkit.event.CPUSummary;
+import com.microsoft.gctoolkit.event.GCCause;
 import com.microsoft.gctoolkit.event.GarbageCollectionTypes;
 import com.microsoft.gctoolkit.event.generational.AbortablePreClean;
 import com.microsoft.gctoolkit.event.generational.CMSConcurrentEvent;
@@ -21,8 +22,10 @@ import com.microsoft.gctoolkit.event.generational.InitialMark;
 import com.microsoft.gctoolkit.event.generational.PSFullGC;
 import com.microsoft.gctoolkit.event.generational.PSYoungGen;
 import com.microsoft.gctoolkit.event.generational.ParNew;
+import com.microsoft.gctoolkit.event.generational.SystemGC;
 import com.microsoft.gctoolkit.event.generational.YoungGC;
 import com.microsoft.gctoolkit.event.jvm.JVMTermination;
+import com.microsoft.gctoolkit.event.jvm.SurvivorRecord;
 import com.microsoft.gctoolkit.jvm.Diary;
 import com.microsoft.gctoolkit.message.ChannelName;
 import com.microsoft.gctoolkit.message.JVMEventChannel;
@@ -61,7 +64,7 @@ import static com.microsoft.gctoolkit.event.GarbageCollectionTypes.Remark;
  * - from, to, configured
  * - pause time if it is reported or can be calculated
  */
-public class UnifiedGenerationalParser extends UnifiedGCLogParser implements UnifiedGenerationalPatterns {
+public class UnifiedGenerationalParser extends UnifiedGCLogParser implements UnifiedGenerationalPatterns, TenuredPatterns {
 
     private static final Logger LOGGER = Logger.getLogger(UnifiedGenerationalParser.class.getName());
 
@@ -98,6 +101,8 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
         parseRules.put(JVM_EXIT, this::jvmExit);
         parseRules.put(END_OF_FILE, this::jvmExit);
         parseRules.put(METASPACE_DETAILED, this::metaSpaceDetails);
+        parseRules.put(TENURING_SUMMARY, this::tenuringSummary);
+        parseRules.put(TENURING_AGE_BREAKDOWN, this::tenuringAgeBreakout);
 
     }
 
@@ -108,7 +113,7 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
             "Sweep", Concurrent_Sweep,
             "Reset", Concurrent_Reset
     );
-
+    
     public UnifiedGenerationalParser() {
     }
 
@@ -156,6 +161,7 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
     private GenerationalForwardReference concurrentCyclePauseEvent = null;
     private GenerationalForwardReference concurrentEvent = null;
     private boolean inConcurrentPhase = false;
+    private int currentGcId = -1;
 
     private void tag(GCLogTrace trace, String line) {
         noop();
@@ -175,6 +181,7 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
             return;
         }
         pauseEvent.setStartTime(getClock());
+    	currentGcId = pauseEvent.getGcID();
         pauseEvent.setGCCause(trace.gcCause(1, 0));
     }
 
@@ -223,8 +230,52 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
     }
 
     private void youngDetails(GCLogTrace trace, String line) {
+    	boolean isNoDetailsEvent = false;
+    	int gcid = GCLogParser.GCID_COUNTER.parse(line).getIntegerGroup(1);
+    	
+    	if (pauseEvent == null && gcid > currentGcId) {
+        	// #457 - Unified-Parallel file without details doesn't trigger youngHeader(). 
+        	// As a result pauseEvent never gets initialized.  We'll do it manually here.    		
+    		
+    		// Dependent capture groups in youngHeader() should be the same, so we can just
+    		// call it to initialize pauseEvent rather than duplicating code.
+    		youngHeader(trace, line);
+    		
+    		// Track that we've created the event here.
+    		isNoDetailsEvent = true;
+    	} 
+    	
         pauseEvent.setDuration(trace.getDuration() / 1000.d);
         pauseEvent.setHeap(trace.getOccupancyBeforeAfterWithMemoryPoolSizeSummary(2));
+        
+        if (isNoDetailsEvent && !diary.isPrintCPUTimes()) {
+        	// #457 - Unified-Parallel-NoDetails doesn't write out CPU summary.  We have to 
+        	// publish the event manually in this case. 
+        	// This code should only be called if we also initialized the pauseEvent in the 
+        	// same context.
+        	publish(buildPauseEvent(pauseEvent));
+        	pauseEvent = null;
+        }
+    }
+
+    /**
+     * Capture logged tenuring summary data
+     * @param trace
+     * @param line
+     */
+    private void tenuringSummary(GCLogTrace trace, String line) {
+        if ( pauseEvent != null)
+            pauseEvent.survivorRecord(new SurvivorRecord(getClock(), trace.getLongGroup(1), trace.getIntegerGroup(2), trace.getIntegerGroup(3)));
+    }
+
+    /**
+     * Capture logged age table data
+     * @param trace
+     * @param line
+     */
+    private void tenuringAgeBreakout(GCLogTrace trace, String line) {
+        if (pauseEvent != null)
+            pauseEvent.addAgeBreakout(trace.getIntegerGroup(1), trace.getLongGroup(2));
     }
 
     /**
@@ -316,12 +367,38 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
             pauseEvent = new GenerationalForwardReference(FullGC, new Decorators(line), super.GCID_COUNTER.parse(line).getIntegerGroup(1));
             pauseEvent.setStartTime(getClock());
         }
+        
         pauseEvent.setGCCause(trace.gcCause(1, 0));
+    	currentGcId = pauseEvent.getGcID();        
     }
 
     private void fullGCSummary(GCLogTrace trace, String line) {
+    	boolean isNoDetailsEvent = false;
+    	int gcid = GCLogParser.GCID_COUNTER.parse(line).getIntegerGroup(1);
+    	
+    	if (pauseEvent == null && gcid > currentGcId) {
+        	// #457 - Unified-Parallel file doesn't trigger fullGC() to create pauseEvent. 
+        	// We'll do it manually here.
+    		
+    		// Dependent capture groups in fullGC() should be the same, so we can just
+    		// call fullGC() to initialize the pauseEvent rather than duplicating code.
+    		fullGC(trace, line);
+    		
+    		// Track that we've created the pauseEvent in this context.
+    		isNoDetailsEvent = true;
+    	}     	
+    	
         pauseEvent.setHeap(trace.getOccupancyBeforeAfterWithMemoryPoolSizeSummary(2));
         pauseEvent.setDuration(trace.getDuration() / 1000.0d);
+        
+        if (isNoDetailsEvent && !diary.isPrintCPUTimes()) {
+        	// #457 - Unified-Parallel-NoDetails doesn't write out CPU summary, so we
+        	// have to publish the event manually in this case. 
+        	// This code should only be called if we also initialized the pauseEvent 
+        	// in the same context.        	
+        	publish(buildPauseEvent(pauseEvent));
+        	pauseEvent = null;
+        }
     }
 
     private void fullGCPhase(GCLogTrace trace, String line) {
@@ -447,13 +524,14 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
                 youngCollection = new PSYoungGen(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration());
                 break;
             default:
-                LOGGER.warning(forwardReference.getGarbageCollectionType() + " not recognized");
+                throw new IllegalStateException(forwardReference.getGarbageCollectionType() + " not recognized");
         }
 
         fillOutMemoryPoolData(youngCollection, forwardReference);
         fillOutMetaspaceData(youngCollection, forwardReference);
         youngCollection.add(forwardReference.getCPUSummary());
-        // add in reference processing
+        youngCollection.add(forwardReference.getSurvivorRecord());
+        // todo: add in reference processing
         return youngCollection;
     }
 
@@ -481,12 +559,21 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
     }
 
     private FullGC buildFullGC(GenerationalForwardReference forwardReference) {
+        FullGC gc;
         switch (forwardReference.getGarbageCollectionType()) {
             case PSFull:
-                return fillOutFullGC(new PSFullGC(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration()), forwardReference);
+                if ( forwardReference.getGCCause().equals(GCCause.JAVA_LANG_SYSTEM))
+                    gc = new SystemGC(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration());
+                else
+                    gc = new PSFullGC(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration());
+                return fillOutFullGC(gc, forwardReference);
             case FullGC:
             case Full:
-                return fillOutFullGC(new FullGC(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration()), forwardReference);
+                if ( forwardReference.getGCCause().equals(GCCause.JAVA_LANG_SYSTEM))
+                    gc = new SystemGC(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration());
+                else
+                    gc = new FullGC(forwardReference.getStartTime(), forwardReference.getGCCause(), forwardReference.getDuration());
+                return fillOutFullGC(gc, forwardReference);
             default:
                 LOGGER.warning(forwardReference.getGarbageCollectionType() + " is unrecognized");
         }
@@ -508,7 +595,7 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
                 return buildInitialMark(forwardReference);
             case Remark:
                 return buildRemark(forwardReference);
-            case PSFull: //todo:
+            case PSFull:
             case FullGC:
             case Full:
                 return buildFullGC(forwardReference);
@@ -554,8 +641,7 @@ public class UnifiedGenerationalParser extends UnifiedGCLogParser implements Uni
         if (line.contains("exit"))
             if (line.contains("used")) return true;
         if (line.contains("workers")) return true;
-        if (line.contains("Heap address")) return true;
-        return line.contains("Desired") || line.contains("Age table") || line.contains("- age ");
+        return line.contains("Heap address");
     }
 
     @Override

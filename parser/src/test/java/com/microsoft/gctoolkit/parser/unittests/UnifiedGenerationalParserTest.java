@@ -58,11 +58,41 @@ public class UnifiedGenerationalParserTest extends ParserTest {
     };
 
     private static final int[] cmsNumberOfDifferentCollectors = {
-            4,
+            8,
     };
 
     private static final int[][] cmsCounts = {
-            //  0,   1,    2,     3,     4,     5,     6,    7,    8,     9,      10,     11,      12
-            {   0,   0, 4461,     0,     0,     2,     0,    0,    0,     0,       0,      2,       2},
+            //  0,   1,    2,     3,     4,     5,     6,    7,    8,     9,      10,     11,      12, 13, 14, 15, 16, 17
+            {   0,   0, 6167,     0,     0,     0,     0,    0,    0,     0,       0,      2,       2,  2,  2,  2,  2,  2},
+    };
+
+    //Serial
+    @Test
+    public void testSerialLogs() {
+        int i = 0;
+        for (String name : serial) {
+            try {
+                Path path = new TestLogFile("serial/" + name).getFile().toPath();
+                TestResults testResults = testGenerationalSingleLogFile(path);
+                analyzeResults(name, testResults, serialNumberOfDifferentCollectors[i], serialCounts[i++]);
+            } catch (IOException ioe) {
+                fail(ioe.getMessage());
+            }
+        }
+    }
+
+    private static final String[] serial = {
+            "factorization-serialgc-tip.log",
+            "factorization-serialgc-jdk21.log"
+    };
+
+    private static final int[] serialNumberOfDifferentCollectors = {
+            2, 2
+    };
+
+    private static final int[][] serialCounts = {
+            //  0,   1,    2,     3,     4,     5,     6,    7,    8,     9,      10,     11,      12, 13, 14, 15, 16, 17
+            {   0,  13,    0,     0,     0,     0,     0,    0,    0,     0,       4,      0,       0,  0,  0,  0,  0,  0}, // 17
+            {   0, 812,    0,     0,     0,     0,     0,    0,    0,     0,      24,      0,       0,  0,  0,  0,  0,  0}, // 835
     };
 }

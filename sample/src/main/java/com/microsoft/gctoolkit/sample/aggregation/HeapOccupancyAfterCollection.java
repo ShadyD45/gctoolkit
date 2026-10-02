@@ -3,10 +3,16 @@ package com.microsoft.gctoolkit.sample.aggregation;
 import com.microsoft.gctoolkit.aggregator.Aggregates;
 import com.microsoft.gctoolkit.aggregator.Aggregator;
 import com.microsoft.gctoolkit.aggregator.EventSource;
+import com.microsoft.gctoolkit.event.GarbageCollectionTypes;
+import com.microsoft.gctoolkit.event.MemoryPoolSummary;
 import com.microsoft.gctoolkit.event.g1gc.G1GCPauseEvent;
 import com.microsoft.gctoolkit.event.generational.GenerationalGCPauseEvent;
 import com.microsoft.gctoolkit.event.shenandoah.ShenandoahCycle;
-import com.microsoft.gctoolkit.event.zgc.ZGCCycle;
+import com.microsoft.gctoolkit.event.zgc.ZGCFullCollection;
+import com.microsoft.gctoolkit.event.zgc.ZGCMemorySummary;
+import com.microsoft.gctoolkit.event.zgc.ZGCOldCollection;
+import com.microsoft.gctoolkit.event.zgc.ZGCYoungCollection;
+import com.microsoft.gctoolkit.time.DateTimeStamp;
 
 @Aggregates({EventSource.G1GC,EventSource.GENERATIONAL,EventSource.ZGC,EventSource.SHENANDOAH})
 public class HeapOccupancyAfterCollection extends Aggregator<HeapOccupancyAfterCollectionAggregation> {
@@ -15,24 +21,46 @@ public class HeapOccupancyAfterCollection extends Aggregator<HeapOccupancyAfterC
         super(results);
         register(GenerationalGCPauseEvent.class, this::extractHeapOccupancy);
         register(G1GCPauseEvent.class, this::extractHeapOccupancy);
-        register(ZGCCycle.class,this::extractHeapOccupancy);
+        register(ZGCFullCollection.class, this::extractHeapOccupancy);
+        register(ZGCOldCollection.class, this::extractHeapOccupancy);
+        register(ZGCYoungCollection.class, this::extractHeapOccupancy);
         register(ShenandoahCycle.class,this::extractHeapOccupancy);
     }
 
+    private void extractHeapOccupancy(ZGCYoungCollection event) {
+        addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getMemorySummary());
+    }
+
+    private void extractHeapOccupancy(ZGCOldCollection event) {
+        addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getMemorySummary());
+    }
+
     private void extractHeapOccupancy(GenerationalGCPauseEvent event) {
-        aggregation().addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getHeap().getOccupancyAfterCollection());
+        addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getHeap());
     }
 
     private void extractHeapOccupancy(G1GCPauseEvent event) {
-        aggregation().addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getHeap().getOccupancyAfterCollection());
+        addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getHeap());
 
     }
 
-    private void extractHeapOccupancy(ZGCCycle event) {
-        aggregation().addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getLive().getReclaimEnd());
+    private void extractHeapOccupancy(ZGCFullCollection event) {
+        addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getMemorySummary());
     }
 
     private void extractHeapOccupancy(ShenandoahCycle event) {
-        // TODO aggregation().addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getOccupancy());
+        //aggregation().addDataPoint(event.getGarbageCollectionType(), event.getDateTimeStamp(), event.getOccupancy());
+    }
+
+    private void addDataPoint(GarbageCollectionTypes gcType, DateTimeStamp timeStamp, MemoryPoolSummary heap) {
+        if (heap != null) {
+            aggregation().addDataPoint(gcType, timeStamp, heap.getOccupancyAfterCollection());
+        }
+    }
+
+    private void addDataPoint(GarbageCollectionTypes gcType, DateTimeStamp timeStamp, ZGCMemorySummary summary) {
+        if (summary != null) {
+            aggregation().addDataPoint(gcType, timeStamp, summary.getOccupancyAfter());
+        }
     }
 }

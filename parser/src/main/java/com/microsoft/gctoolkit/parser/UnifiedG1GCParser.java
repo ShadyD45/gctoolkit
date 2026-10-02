@@ -15,6 +15,7 @@ import com.microsoft.gctoolkit.event.g1gc.G1GCEvent;
 import com.microsoft.gctoolkit.event.g1gc.G1GCPauseEvent;
 import com.microsoft.gctoolkit.event.jvm.JVMEvent;
 import com.microsoft.gctoolkit.event.jvm.JVMTermination;
+import com.microsoft.gctoolkit.event.jvm.SurvivorRecord;
 import com.microsoft.gctoolkit.jvm.Diary;
 import com.microsoft.gctoolkit.message.ChannelName;
 import com.microsoft.gctoolkit.message.JVMEventChannel;
@@ -47,7 +48,7 @@ import static com.microsoft.gctoolkit.event.GarbageCollectionTypes.fromLabel;
  * - pause time if it is reported or can be calculated
  * todo: me
  */
-public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GCPatterns {
+public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GCPatterns, TenuredPatterns {
 
     private static final Logger LOGGER = Logger.getLogger(UnifiedG1GCParser.class.getName());
 
@@ -154,6 +155,8 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
         parseRules.put(REBUILD_FREELIST, this::noop);
         parseRules.put(NEW_CSET, this::noop);
         parseRules.put(RESIZE_TLAB, this::noop);
+        parseRules.put(TENURING_SUMMARY, this::tenuringSummary);
+        parseRules.put(TENURING_AGE_BREAKDOWN, this::tenuringAgeBreakout);
     }
 
     public UnifiedG1GCParser() {
@@ -191,7 +194,6 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
         }
 
         final String lineAfterGcId = line.substring(end);
-
         parseRules.stream()
                 .map(Map.Entry::getKey)
                 .map(rule -> new AbstractMap.SimpleEntry<>(rule, rule.parse(lineAfterGcId)))
@@ -219,6 +221,10 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
     private void setForwardReference(int gcid, String line) {
         if (gcid != -1) {
             forwardReference = collectionsUnderway.computeIfAbsent(gcid, k -> new G1GCForwardReference(new Decorators(line), gcid));
+            forwardReference.setHeapRegionSize(regionSize);
+            forwardReference.setMaxHeapSize(maxHeapSize);
+            forwardReference.setMinHeapSize(minHeapSize);
+            forwardReference.setInitialHeapSize(initialHeapSize);
         }
     }
 
@@ -248,7 +254,6 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
     public void endOfFile(GCLogTrace trace, String line) {
         publish(new JVMTermination((jvmTerminationEventTime.hasTimeStamp()) ? jvmTerminationEventTime : getClock(),diary.getTimeOfFirstEvent()));
     }
-
 
     /**
      * following records describe heap before the collection
@@ -280,34 +285,37 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
     //Minimum heap 8388608  Initial heap 268435456  Maximum heap 268435456
     //these values go back to the JavaVirtualMachine..
     public void heapSize(GCLogTrace trace, String line) {
-        G1GCForwardReference.setMinHeapSize(trace.getLongGroup(1));
-        G1GCForwardReference.setInitialHeapSize(trace.getLongGroup(2));
-        G1GCForwardReference.setMaxHeapSize(trace.getLongGroup(3));
+        this.minHeapSize = trace.getLongGroup(1);
+        this.initialHeapSize = trace.getLongGroup(2);
+        this.maxHeapSize = trace.getLongGroup(3);
     }
 
     //return to JVM
     private int regionSize = 0; //region size in Gigabytes
+    private long minHeapSize = 0;
+    private long initialHeapSize = 0;
+    private long maxHeapSize = 0;
 
     public void heapRegionSize(GCLogTrace trace, String line) {
         regionSize = trace.getIntegerGroup(1);
-        G1GCForwardReference.setHeapRegionSize(regionSize);
     }
 
     //[15.316s][debug][gc,heap      ] GC(0)   region size 1024K, 24 young (24576K), 0 survivors (0K)
     //ignore this logging for now
     private void youngRegionAllotment(GCLogTrace trace, String line) {
-//        if (before) {
-//            forwardReference.setYoungOccupancyBeforeCollection(trace.getLongGroup(3));
-//            forwardReference.setSurvivorOccupancyBeforeCollection(trace.getLongGroup(5));
-//            forwardReference.setEdenOccupancyBeforeCollection(trace.getLongGroup(3)-trace.getLongGroup(5));
-//            forwardReference.setYoungSizeBeforeCollection(trace.getLongGroup(3));
-//        }
-//        else {
-//            forwardReference.setYoungOccupancyAfterCollection(trace.getLongGroup(5));
-//            forwardReference.setSurvivorOccupancyAfterCollection(trace.getLongGroup(5));
-//            forwardReference.setEdenOccupancyAfterCollection(0L);
-//            forwardReference.setYoungSizeAfterCollection(trace.getLongGroup(3));
-//        }
+        forwardReference.setHeapRegionSize(trace.getIntegerGroup(1) / 1024);
+        if (before) {
+            forwardReference.setYoungOccupancyBeforeCollection(trace.getLongGroup(3));
+            forwardReference.setSurvivorOccupancyBeforeCollection(trace.getLongGroup(5));
+            forwardReference.setEdenOccupancyBeforeCollection(trace.getLongGroup(3)-trace.getLongGroup(5));
+            forwardReference.setYoungSizeBeforeCollection(trace.getLongGroup(3));
+        }
+        else {
+            forwardReference.setYoungOccupancyAfterCollection(trace.getLongGroup(5));
+            forwardReference.setSurvivorOccupancyAfterCollection(trace.getLongGroup(5));
+            forwardReference.setEdenOccupancyAfterCollection(0L);
+            forwardReference.setYoungSizeAfterCollection(trace.getLongGroup(3));
+        }
     }
 
     /**
@@ -367,8 +375,9 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
                     break;
             }
         }
+        // The location for the gc cause is back 2 from where it typically is in other records.
         forwardReference.setGcType(gcType);
-        forwardReference.setGCCause(trace.gcCause(1));
+        forwardReference.setGCCause(trace.gcCause(-2));
         forwardReference.setStartTime(getClock());
     }
 
@@ -487,6 +496,7 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
                 forwardReference.setHumongousRegionSummary(summary);
                 break;
             case "Archive":
+                // Archive Region type is only available in JDK 14 and 17.
                 forwardReference.setArchiveRegionSummary(summary);
                 break;
             default:
@@ -500,12 +510,29 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
             forwardReference.setMetaspaceSizeAfterCollection(trace.toKBytes(5));
         }
     }
-
+    
     public void youngDetails(GCLogTrace trace, String line) {
         forwardReference.setHeapOccupancyBeforeCollection(trace.toKBytes(5));
         forwardReference.setHeapOccupancyAfterCollection(trace.toKBytes(7));
         forwardReference.setHeapSizeAfterCollection(trace.toKBytes(9));
         forwardReference.setDuration(trace.getDurationInSeconds());
+
+        // Handling -Xlog:gc logs (#372)
+    	// If the GC log was generated using -Xlog:gc instead of -Xlog:gc*, there won't be a CPU breakout
+        // line that will publish the event.  (cpuBreakout() above)
+
+        // If we haven't spotted a CPU decorator in the diarizer, we should be able to publish this line 
+        // after filling in the missing info.
+    	if (forwardReference.getGcType() == null && !diary.isPrintCPUTimes()) {
+    		forwardReference.setGcType(GarbageCollectionTypes.Young);
+    		forwardReference.setGCCause(trace.gcCause(-2));
+    		forwardReference.setStartTime(getClock());
+            try {
+                publishPauseEvent(forwardReference.buildEvent());
+            } catch (MalformedEvent malformedEvent) {
+                LOGGER.warning(malformedEvent.getMessage());
+            }
+    	}
     }
 
     /**
@@ -522,7 +549,7 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
         forwardReference.setMetaspaceSizeAfterCollection(metaspace.getSizeAfterCollection());
         MemoryPoolSummary classSpace = trace.getEnlargedMetaSpaceRecord(17);
         forwardReference.setClassspaceOccupancyBeforeCollection(classSpace.getOccupancyBeforeCollection());
-        forwardReference.setClassspaceCommittedAfterCollection(classSpace.getOccupancyAfterCollection());
+        forwardReference.setClassspaceOccupancyAfterCollection(classSpace.getOccupancyAfterCollection());
         forwardReference.setClassspaceSizeAfterCollection(classSpace.getSizeAfterCollection());
     }
 
@@ -665,6 +692,25 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
     }
 
     /**
+     * Capture logged tenuring summary data
+     * @param trace
+     * @param line
+     */
+    private void tenuringSummary(GCLogTrace trace, String line) {
+        forwardReference.survivorRecord(new SurvivorRecord(getClock(), trace.getLongGroup(1), trace.getIntegerGroup(2), trace.getIntegerGroup(3)));
+    }
+
+    /**
+     * Capture logged age table data
+     * @param trace
+     * @param line
+     */
+    private void tenuringAgeBreakout(GCLogTrace trace, String line) {
+        notYetImplemented(trace,line);
+        forwardReference.addAgeBreakout(trace.getIntegerGroup(1), trace.getLongGroup(2));
+    }
+
+    /**
      * records a concurrent phase of a concurrent cycle. After the event has been recorded, all other events
      * that occurred during the concurrent event will be recorded.
      * The exception is the Concurrent Undo cycle which causes all concurrent phases to be queued until the
@@ -718,8 +764,6 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
     }
 
     private boolean ignoreFrequentlySeenButUnwantedLines(String line) {
-        if (line.contains("Desired survivor size")) return true;
-        if (line.contains("Age table with threshold")) return true;
         if (line.contains("safepoint")) return true;
         if (line.contains(") Skipped phase ")) return true;
         if (line.contains(" Total                          Min: ")) return true;
@@ -730,7 +774,7 @@ public class UnifiedG1GCParser extends UnifiedGCLogParser implements UnifiedG1GC
         if (line.contains(" StringTable Weak               Min:")) return true;
         if (line.contains(" ResolvedMethodTable Weak       Min:")) return true;
         if (line.contains(" JNI Weak                       Min:")) return true;
-        return line.contains(" - age ");
+        return false;
     }
 
     /**

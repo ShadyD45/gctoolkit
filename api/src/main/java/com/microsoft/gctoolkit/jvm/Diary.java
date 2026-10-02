@@ -50,8 +50,17 @@ import static com.microsoft.gctoolkit.jvm.SupportedFlags.*;
     TLAB_DATA,                                  // 25
     PRINT_PROMOTION_FAILURE,                    // 26
     PRINT_FLS_STATISTICS                        // 27
+    PRINT_CPU_TIMES                             // 28
+    GENERATIONAL_ZGC                            // 29
  */
 
+/**
+ * Records discovered GC log feature states while a log is being diarized.
+ *
+ * <p>Each {@link SupportedFlags} entry is tracked as true, false, or unknown so
+ * parser selection and event-source discovery can defer decisions until enough
+ * log evidence has been observed.</p>
+ */
 public class Diary {
 
     private final TripleState[] states;
@@ -172,6 +181,10 @@ public class Diary {
 
     public boolean isZGC() {
         return isTrue(SupportedFlags.ZGC);
+    }
+
+    public boolean isGenerationalZGC(){
+        return isTrue(SupportedFlags.GENERATIONAL_ZGC);
     }
 
     public boolean isShenandoah() {
@@ -378,6 +391,10 @@ public class Diary {
         return isApplicationStoppedTimeKnown() && isApplicationRunningTime();
     }
 
+    public boolean isPrintCPUTimes() {
+    	return isStateKnown(SupportedFlags.PRINT_CPU_TIMES);
+    }
+    
     public void setTimeOfFirstEvent(DateTimeStamp startTime) {
         if ( this.timeOfFirstEvent == null)
             this.timeOfFirstEvent = startTime;
@@ -386,7 +403,13 @@ public class Diary {
     public DateTimeStamp getTimeOfFirstEvent() {
         return this.timeOfFirstEvent;
     }
-/*    GENERATIONAL,
+
+    public boolean hasTimeOfFirstEvent() {
+        return this.timeOfFirstEvent != null;
+    }
+
+/*
+    GENERATIONAL,
     CMS,
     G1GC,
     SHENANDOAH,
@@ -394,7 +417,6 @@ public class Diary {
     SAFEPOINT,
     SURVIVOR,
     TENURED;
-
  */
     private void evaluate(Set<EventSource> events, SupportedFlags flag, EventSource eventSource) {
         if ( isStateKnown(flag) & isTrue(flag))

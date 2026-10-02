@@ -2,6 +2,10 @@
 // Licensed under the MIT License.
 package com.microsoft.gctoolkit.jvm;
 
+/**
+ * Flags that describe JVM, collector, and log-detail features discovered while
+ * diarizing a GC log.
+ */
 public enum SupportedFlags {
     APPLICATION_STOPPED_TIME,                   //  0
     APPLICATION_CONCURRENT_TIME,                //  1
@@ -35,6 +39,10 @@ public enum SupportedFlags {
     MAX_TENURING_THRESHOLD_VIOLATION,           // 24
     TLAB_DATA,                                  // 25
     PRINT_PROMOTION_FAILURE,                    // 26
-    PRINT_FLS_STATISTICS                        // 27
+    PRINT_FLS_STATISTICS,                       // 27
+    
+    PRINT_CPU_TIMES,                            // 28
+
+    GENERATIONAL_ZGC,                           // 29
 
 }

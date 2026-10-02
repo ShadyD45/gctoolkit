@@ -1,0 +1,53 @@
+name: Release to GitHub using JReleaser
+
+on:
+  workflow_dispatch:
+
+jobs:
+  publish:
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout project
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Cache Maven
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: ~/.m2/repository
+          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
+          restore-keys: ${{ runner.os }}-m2
+
+      - name: Setup Java JDK
+        uses: actions/setup-java@dd06d9cba3e5552c54d9f8ea23572deb30010f7c # v6.0.0
+        with:
+          java-version: '11'
+          distribution: 'microsoft'
+          server-id: ossrh
+          server-username: MAVEN_USERNAME
+          server-password: MAVEN_CENTRAL_TOKEN
+
+      - name: Configure Git user
+        run: |
+          git config user.email "noreply@github.com"
+          git config user.name "GitHub"
+          git config committer.name "GitHub"
+            git config committer.email "noreply@github.com"
+
+      - name: Version
+        id: version
+        run: |
+          release_version=$(./mvnw help:evaluate -Dexpression=project.version -q -DforceStdout)
+          release_version=${release_version%-*}
+          echo ::set-output name=version::${release_version}
+
+      - name: Git-release
+        run: |
+          ./mvnw -B versions:set -DnewVersion=${{steps.version.outputs.version}}
+          ./mvnw -B -pl :gctoolkit -Pjreleaser jreleaser:release
+        env:
+          JRELEASER_GITHUB_TOKEN: ${{ secrets.RELEASE_TOKEN }}

@@ -6,6 +6,7 @@ import com.microsoft.gctoolkit.event.GCCause;
 import com.microsoft.gctoolkit.event.GarbageCollectionTypes;
 import com.microsoft.gctoolkit.event.StatisticalSummary;
 import com.microsoft.gctoolkit.event.UnifiedStatisticalSummary;
+import com.microsoft.gctoolkit.event.jvm.SurvivorRecord;
 import com.microsoft.gctoolkit.time.DateTimeStamp;
 
 import java.util.Iterator;
@@ -18,6 +19,8 @@ public class G1Young extends G1RealPause {
 
     private double parallelPhaseDuration = -1.0d;
     private int gcWorkers;
+    private int evacuationWorkersUsed;
+    private int evacuationWorkersAvailable;
     private double codeRootFixupDuration = -1.0d;
     private double codeRootMigrationDuration = -1.0d;
     private double codeRootPurgeDuration = -1.0d;
@@ -34,6 +37,7 @@ public class G1Young extends G1RealPause {
     private StatisticalSummary workerTotal;
     private StatisticalSummary processedBuffersSummary;
     private boolean toSpaceExhausted = false;
+    private SurvivorRecord survivorRecord;
 
     private final Map<String, StatisticalSummary> parallelPhaseSummaries = new ConcurrentHashMap<>();
     private final Map<String, Double> phaseDurations = new ConcurrentHashMap<>();
@@ -60,6 +64,14 @@ public class G1Young extends G1RealPause {
 
     public void setGcWorkers(int count) {
         this.gcWorkers = count;
+    }
+
+    public void setEvacuationWorkersUsed(int evacuationWorkersUsed) {
+        this.evacuationWorkersUsed = evacuationWorkersUsed;
+    }
+
+    public void setEvacuationWorkersAvailable(int evacuationWorkersAvailable) {
+        this.evacuationWorkersAvailable = evacuationWorkersAvailable;
     }
 
     public void setCodeRootFixupDuration(double duration) {
@@ -105,6 +117,14 @@ public class G1Young extends G1RealPause {
 
     public int getGcWorkers() {
         return gcWorkers;
+    }
+
+    public int getEvacuationWorkersUsed() {
+        return evacuationWorkersUsed;
+    }
+
+    public int getEvacuationWorkersAvailable() {
+        return evacuationWorkersAvailable;
     }
 
     public double getCodeRootFixupDuration() {
@@ -176,6 +196,14 @@ public class G1Young extends G1RealPause {
             workerOther = statisticalSummary;
         if (group.endsWith("Total"))
             workerTotal = statisticalSummary;
+    }
+
+    public void add(SurvivorRecord record) {
+        this.survivorRecord = record;
+    }
+
+    public SurvivorRecord getSurvivorRecord() {
+        return survivorRecord;
     }
 
     public StatisticalSummary getWorkerOther() {

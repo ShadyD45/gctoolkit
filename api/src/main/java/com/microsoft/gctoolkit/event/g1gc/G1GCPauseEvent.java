@@ -18,8 +18,11 @@ public abstract class G1GCPauseEvent extends G1GCEvent {
 
     private MemoryPoolSummary eden;
     private SurvivorMemoryPoolSummary survivor;
+    private MemoryPoolSummary old;
+    private MemoryPoolSummary humongous;
     private MemoryPoolSummary heap;
     private MemoryPoolSummary permOrMetaspace;
+    private MemoryPoolSummary classSpace;
     private ReferenceGCSummary referenceGCSummary = null;
 
     private RegionSummary edenRegion;
@@ -29,6 +32,7 @@ public abstract class G1GCPauseEvent extends G1GCEvent {
     private RegionSummary archiveRegion;
 
     private CPUSummary cpuSummary;
+    private int heapRegionSize;
 
     public G1GCPauseEvent(DateTimeStamp timeStamp, GarbageCollectionTypes type, GCCause cause, double duration) {
         super(timeStamp, type, cause, duration);
@@ -44,8 +48,25 @@ public abstract class G1GCPauseEvent extends G1GCEvent {
         this.addMemorySummary(null, null, heap);
     }
 
+    public void addMemorySummary(MemoryPoolSummary eden,
+                                 SurvivorMemoryPoolSummary survivor,
+                                 MemoryPoolSummary old,
+                                 MemoryPoolSummary humongous,
+                                 MemoryPoolSummary heap) {
+        this.eden = eden;
+        this.survivor = survivor;
+        this.old = old;
+        this.humongous = humongous;
+        this.heap = heap;
+    }
+
     public void addPermOrMetaSpaceRecord(MemoryPoolSummary permOrMetaspaceRecord) {
-        permOrMetaspace = permOrMetaspaceRecord;
+       addPermOrMetaSpaceRecord(permOrMetaspaceRecord, null);
+    }
+
+    public void addPermOrMetaSpaceRecord(MemoryPoolSummary permOrMetaspaceRecord, MemoryPoolSummary classSpace) {
+        this.permOrMetaspace = permOrMetaspaceRecord;
+        this.classSpace =  classSpace;
     }
 
     public void addCPUSummary(CPUSummary summary) {
@@ -96,16 +117,33 @@ public abstract class G1GCPauseEvent extends G1GCEvent {
         return this.permOrMetaspace;
     }
 
+    public MemoryPoolSummary getHumongous() {
+        return humongous;
+    }
+
+    public MemoryPoolSummary getOld() {
+        return old;
+    }
+
+    public MemoryPoolSummary getClassSpace() {
+        return classSpace;
+    }
+
     public MemoryPoolSummary getTenured() {
         if ((getEden() == null) || (getHeap() == null)) {
             return NULL_POOL;
         } else if (getSurvivor() == null) {
             return getHeap().minus(getEden());
         } else {
-            return new MemoryPoolSummary(getHeap().getOccupancyBeforeCollection() - this.getEden().getOccupancyBeforeCollection() - getSurvivor().getOccupancyBeforeCollection(),
-                    getHeap().getSizeBeforeCollection() - getEden().getSizeBeforeCollection() - getSurvivor().getOccupancyBeforeCollection(),
-                    getHeap().getOccupancyAfterCollection() - getEden().getOccupancyAfterCollection() - getSurvivor().getOccupancyAfterCollection(),
-                    getHeap().getSizeAfterCollection() - getEden().getSizeAfterCollection() - getSurvivor().getOccupancyAfterCollection());
+            final RegionSummary summary = getArchiveRegionSummary();
+            final long archiveRegionByteBefore = summary.getBefore() * heapRegionSize * 1024L;
+            final long archiveRegionByteAfter = summary.getAfter() * heapRegionSize * 1024L;
+            final long archiveRegionByteAssigned = summary.getAssigned() * heapRegionSize * 1024L;
+
+            return new MemoryPoolSummary(getHeap().getOccupancyBeforeCollection() - this.getEden().getOccupancyBeforeCollection() - getSurvivor().getOccupancyBeforeCollection() - archiveRegionByteAssigned,
+                    getHeap().getSizeBeforeCollection() - getEden().getSizeBeforeCollection() - getSurvivor().getOccupancyBeforeCollection() - archiveRegionByteBefore,
+                    getHeap().getOccupancyAfterCollection() - getEden().getOccupancyAfterCollection() - getSurvivor().getOccupancyAfterCollection() - archiveRegionByteAssigned,
+                    getHeap().getSizeAfterCollection() - getEden().getSizeAfterCollection() - getSurvivor().getOccupancyAfterCollection() - archiveRegionByteAfter);
         }
     }
 
@@ -121,4 +159,7 @@ public abstract class G1GCPauseEvent extends G1GCEvent {
         return this.cpuSummary;
     }
 
+    public void addHeapRegionSize(int heapRegionSize) {
+        this.heapRegionSize = heapRegionSize;
+    }
 }
